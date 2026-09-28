@@ -1,0 +1,56 @@
+services:
+  # Build-only: produces the image agent commands run in, then exits.
+  sandbox:
+    build:
+      context: .
+      dockerfile: docker/sandbox.Dockerfile
+    image: coding-agent-sandbox:latest
+    command: ["true"]
+    restart: "no"
+
+  agent:
+    build:
+      context: .
+      dockerfile: docker/agent.Dockerfile
+    depends_on:
+      sandbox:
+        condition: service_completed_successfully
+    environment:
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-16384}
+      MAX_ITERATIONS: ${MAX_ITERATIONS:-25}
+      COMMAND_TIMEOUT: ${COMMAND_TIMEOUT:-120}
+      SANDBOX_MODE: docker
+      SANDBOX_IMAGE: coding-agent-sandbox:latest
+      SANDBOX_NETWORK: ${SANDBOX_NETWORK:-none}
+      SANDBOX_MEMORY: ${SANDBOX_MEMORY:-1g}
+      SANDBOX_CPUS: ${SANDBOX_CPUS:-1}
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
+      # Sandbox containers are siblings started via the host daemon, so they need
+      # the workspace path as the HOST sees it.
+      HOST_WORKSPACE_DIR: ${HOST_WORKSPACE_DIR:-${PWD}/workspace}
+    volumes:
+      - ./workspace:/workspace
+      - agent-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock # root-equivalent: see README "Security"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+    depends_on:
+      - agent
+    environment:
+      AGENT_API_TOKEN: ${AGENT_API_TOKEN:-}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8080}:80"
+    restart: unless-stopped
+
+volumes:
+  agent-data:

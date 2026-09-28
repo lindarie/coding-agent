@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+# Projects the agent edits live in their own git repos, not in this one.
+workspace/*
+!workspace/.gitkeep

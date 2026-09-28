@@ -1,0 +1,13 @@
+{
+  "name": "coding-agent",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev:web": "pnpm --filter @coding-agent/web dev",
+    "dev:agent": "cd apps/agent && python -m uvicorn app.main:app --reload --port 8000",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "cli": "pnpm --filter @coding-agent/web run cli",
+    "test:agent": "cd apps/agent && python -m pytest"
+  }
+}
