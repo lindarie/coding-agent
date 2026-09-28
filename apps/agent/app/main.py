@@ -11,11 +11,12 @@ from pydantic import BaseModel, Field
 
 from .config import get_settings
 from .db import Store
+from . import gitutil
 from .loop import AgentRun
 from .ollama import OllamaClient
 from .sandbox import Sandbox
 from .tools import ToolBox
-from .workspace import list_projects, resolve_project
+from .workspace import create_project, list_project_files, list_projects, read_project_file, resolve_project
 
 
 class RunRequest(BaseModel):
@@ -23,6 +24,10 @@ class RunRequest(BaseModel):
     workspace: str = Field(min_length=1, description="Project directory name under the workspace root")
     max_iterations: int | None = Field(default=None, ge=1, le=200)
     model: str | None = None
+
+
+class CreateWorkspaceRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64, description="New project directory name")
 
 
 @asynccontextmanager
@@ -55,6 +60,7 @@ async def health(request: Request):
     return {
         "status": "ok",
         "ollama": ollama_ok,
+        "models": models,
         "model": s.model,
         "model_available": s.model in models,
         "sandbox_mode": s.sandbox_mode,
@@ -69,9 +75,110 @@ async def workspaces() -> list[str]:
     return list_projects(get_settings().workspace_root)
 
 
+@api.post("/workspaces", status_code=201)
+async def create_workspace(req: CreateWorkspaceRequest, request: Request):
+    """Create an empty project directory under the workspace root."""
+    try:
+        path = create_project(get_settings().workspace_root, req.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    created_at = request.app.state.store.add_workspace(path.name)
+    return {"name": path.name, "created_at": created_at}
+
+
+@api.get("/workspaces/details")
+async def workspace_details(request: Request):
+    """Workspaces with creation time (if created via the API) and run activity, newest first."""
+    stats = request.app.state.store.workspace_stats()
+    out = []
+    for name in list_projects(get_settings().workspace_root):
+        st = stats.get(name, {})
+        out.append({
+            "name": name,
+            "created_at": st.get("created_at"),
+            "run_count": st.get("run_count", 0),
+            "last_run_at": st.get("last_run_at"),
+        })
+    out.sort(key=lambda w: (w["created_at"] is None, -(w["created_at"] or 0), w["name"]))
+    return out
+
+
+@api.get("/git-log")
+async def git_log(workspace: str | None = None, limit: int = 50):
+    """Recent commits across workspaces, optionally scoped to one workspace."""
+    s = get_settings()
+    names = [workspace] if workspace else list_projects(s.workspace_root)
+    if workspace:
+        try:
+            resolve_project(s.workspace_root, workspace)
+        except FileNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    count = min(max(limit, 1), 100)
+    commits = []
+    for name in names:
+        try:
+            project = resolve_project(s.workspace_root, name)
+        except (FileNotFoundError, ValueError):
+            continue
+        commits.extend({**commit, "workspace": name} for commit in await gitutil.list_commits(project, count))
+    commits.sort(key=lambda commit: commit["timestamp"], reverse=True)
+    return commits[:count]
+
+
+@api.get("/workspaces/{workspace}/git-log/{commit_hash}")
+async def git_commit_diff(workspace: str, commit_hash: str):
+    try:
+        project = resolve_project(get_settings().workspace_root, workspace)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    diff = await gitutil.commit_diff(project, commit_hash)
+    if diff is None:
+        raise HTTPException(status_code=404, detail="Git commit not found")
+    return {"diff": diff}
+
+
+@api.get("/workspaces/{workspace}/files")
+async def workspace_files(workspace: str):
+    try:
+        project = resolve_project(get_settings().workspace_root, workspace)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return list_project_files(project)
+
+
+@api.get("/workspaces/{workspace}/file")
+async def workspace_file(workspace: str, path: str):
+    try:
+        project = resolve_project(get_settings().workspace_root, workspace)
+        content = read_project_file(project, path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except OverflowError as e:
+        raise HTTPException(status_code=413, detail=str(e))
+    except UnicodeError as e:
+        raise HTTPException(status_code=415, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"path": path, "content": content}
+
+
+@api.get("/files")
+async def file_history(request: Request, workspace: str | None = None, limit: int = 200):
+    """Files created/modified by agent runs, newest first."""
+    return request.app.state.store.list_file_events(workspace or None, min(max(limit, 1), 1000))
+
+
 @api.get("/runs")
-async def runs(request: Request, limit: int = 50):
-    return request.app.state.store.list_runs(min(max(limit, 1), 200))
+async def runs(request: Request, limit: int = 50, workspace: str | None = None):
+    return request.app.state.store.list_runs(min(max(limit, 1), 200), workspace or None)
 
 
 @api.get("/runs/{run_id}")

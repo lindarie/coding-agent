@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from pathlib import Path
 
 DEFAULT_GITIGNORE = "__pycache__/\n*.pyc\n.pytest_cache/\nnode_modules/\n.venv/\ndist/\n"
@@ -53,3 +54,40 @@ async def commit_changes(project: Path, message: str) -> str | None:
         return None
     _, stat = await _git(project, "show", "--stat", "--format=", "HEAD")
     return stat or None
+
+
+async def list_commits(project: Path, limit: int = 50) -> list[dict[str, str | int]]:
+    """Return recent commit subjects and timestamps for the workspace history view."""
+    if not (project / ".git").exists():
+        return []
+    code, output = await _git(project, "log", f"-{limit}", "--format=%H%x00%ct%x00%s")
+    if code != 0:
+        return []
+    commits = []
+    for line in output.splitlines():
+        parts = line.split("\x00", 2)
+        if len(parts) != 3:
+            continue
+        commit_hash, timestamp, subject = parts
+        if subject == "baseline before agent":
+            continue
+        try:
+            commits.append({"hash": commit_hash, "timestamp": int(timestamp), "subject": subject})
+        except ValueError:
+            continue
+    return commits
+
+
+async def commit_diff(project: Path, commit_hash: str) -> str | None:
+    """Return a bounded unified patch for a full commit hash."""
+    if not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", commit_hash):
+        return None
+    code, output = await _git(
+        project, "show", "--no-ext-diff", "--no-color", "--format=", "--unified=3", commit_hash, "--"
+    )
+    if code != 0:
+        return None
+    limit = 200_000
+    if len(output) > limit:
+        return output[:limit] + "\n... diff truncated at 200,000 characters ..."
+    return output

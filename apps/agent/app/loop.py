@@ -60,12 +60,14 @@ class AgentRun:
             "agent_started", task=self.task, workspace=self.workspace,
             model=self.model, max_iterations=self.max_iterations,
         )
+        yield self._emit("status", message="Analyzing prompt", phase="analyzing")
         status, summary, iterations, branch, diff_stat = "max_iterations", "", 0, None, None
         try:
             branch = await gitutil.prepare_branch(self.project, self.run_id)
             if branch:
                 yield self._emit("status", message=f"Working on git branch {branch}")
 
+            yield self._emit("status", message="Understanding project context", phase="context")
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {
@@ -109,6 +111,17 @@ class AgentRun:
                             args = json.loads(args)
                         except json.JSONDecodeError:
                             args = {}
+                    tool_phases = {
+                        "list_files": ("context", "Exploring project files"),
+                        "read_file": ("context", "Reading project files"),
+                        "search_files": ("context", "Searching project files"),
+                        "write_file": ("coding", "Writing code"),
+                        "run_command": ("checking", "Running project checks"),
+                    }
+                    phase_update = tool_phases.get(name)
+                    if phase_update:
+                        phase, message = phase_update
+                        yield self._emit("status", message=message, phase=phase, iteration=iteration)
                     yield self._emit("tool_call", tool=name, arguments=args, iteration=iteration)
 
                     outcome: ToolOutcome | None = None
@@ -130,6 +143,7 @@ class AgentRun:
 
         if branch:
             try:
+                yield self._emit("status", message="Committing project changes", phase="committing")
                 diff_stat = await gitutil.commit_changes(self.project, f"agent: {self.task}")
             except Exception:
                 diff_stat = None

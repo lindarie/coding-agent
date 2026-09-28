@@ -51,6 +51,8 @@ def test_full_loop_with_git(tmp_path):
     events = asyncio.run(go())
     types = [e.type for e in events]
     assert types[0] == "agent_started" and types[-1] == "agent_finished"
+    phases = [e.phase for e in events if e.type == "status" and e.phase]
+    assert phases == ["analyzing", "context", "context", "coding", "checking", "committing"]
     for expected in ["tool_call", "tool_result", "file_changed", "command_started", "command_finished", "agent_message"]:
         assert expected in types
     assert [e.seq for e in events] == list(range(1, len(events) + 1))

@@ -1,4 +1,11 @@
 import type { AgentEvent, Health, RunDetail, RunRequest, RunSummary } from "./events";
+import type {
+  CreatedWorkspace,
+  FileHistoryEntry,
+  GitCommit,
+  WorkspaceDetail,
+  WorkspaceFileEntry,
+} from "./workspaces";
 
 export interface ClientOptions {
   /** e.g. "http://localhost:8000". Empty string = same origin (browser behind the nginx proxy). */
@@ -40,7 +47,51 @@ async function errorText(res: Response): Promise<string> {
 
 export const getHealth = (o: ClientOptions = {}) => getJson<Health>("/api/health", o);
 export const listWorkspaces = (o: ClientOptions = {}) => getJson<string[]>("/api/workspaces", o);
-export const listRuns = (o: ClientOptions = {}) => getJson<RunSummary[]>("/api/runs", o);
+export interface HistoryQuery extends ClientOptions {
+  /** Only this workspace. Omit for all. */
+  workspace?: string;
+  limit?: number;
+}
+
+function query(params: Record<string, string | number | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") qs.set(k, String(v));
+  const text = qs.toString();
+  return text ? `?${text}` : "";
+}
+
+export const listRuns = (o: HistoryQuery = {}) =>
+  getJson<RunSummary[]>(`/api/runs${query({ workspace: o.workspace, limit: o.limit })}`, o);
+export const listFileHistory = (o: HistoryQuery = {}) =>
+  getJson<FileHistoryEntry[]>(`/api/files${query({ workspace: o.workspace, limit: o.limit })}`, o);
+export const listWorkspaceDetails = (o: ClientOptions = {}) =>
+  getJson<WorkspaceDetail[]>("/api/workspaces/details", o);
+export const listGitLog = (o: HistoryQuery = {}) =>
+  getJson<GitCommit[]>(`/api/git-log${query({ workspace: o.workspace, limit: o.limit })}`, o);
+export const listWorkspaceFiles = (workspace: string, o: ClientOptions = {}) =>
+  getJson<WorkspaceFileEntry[]>(`/api/workspaces/${encodeURIComponent(workspace)}/files`, o);
+export const getWorkspaceFile = (workspace: string, path: string, o: ClientOptions = {}) =>
+  getJson<{ path: string; content: string }>(
+    `/api/workspaces/${encodeURIComponent(workspace)}/file${query({ path })}`,
+    o,
+  );
+export const getCommitDiff = (workspace: string, hash: string, o: ClientOptions = {}) =>
+  getJson<{ diff: string }>(
+    `/api/workspaces/${encodeURIComponent(workspace)}/git-log/${encodeURIComponent(hash)}`,
+    o,
+  );
+
+/** Create an empty project directory. Rejects with ApiError (400 invalid name, 409 already exists). */
+export async function createWorkspace(name: string, o: ClientOptions = {}): Promise<CreatedWorkspace> {
+  const res = await fetch(`${o.baseUrl ?? ""}/api/workspaces`, {
+    method: "POST",
+    headers: headers(o, true),
+    body: JSON.stringify({ name }),
+    signal: o.signal,
+  });
+  if (!res.ok) throw new ApiError(res.status, await errorText(res));
+  return (await res.json()) as CreatedWorkspace;
+}
 export const getRun = (id: string, o: ClientOptions = {}) => getJson<RunDetail>(`/api/runs/${id}`, o);
 
 /** Start a run and yield AgentEvents as they arrive (Server-Sent Events over a POST). */

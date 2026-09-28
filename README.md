@@ -52,7 +52,10 @@ docker/              agent, sandbox and web Dockerfiles + nginx template
    cd workspace/demo && git log --stat -1
    ```
 
-Reset the demo: `./scripts/seed-demo.sh`. Put your own projects as directories under `workspace/`.
+Reset the demo: `./scripts/seed-demo.sh`. Add projects by creating them in the UI (**Run** tab, "Create workspace"; names are
+1-64 characters of letters, digits, `.`, `_`, `-`) or by putting directories under `workspace/` yourself. The **History** tab lists
+workspaces, past runs (click one to replay its events) and every file the agent created or modified, filterable per workspace.
+Directories created from the UI are owned by the agent container's user (root in Docker), like files written by the sandbox.
 
 ## API
 
@@ -60,7 +63,10 @@ Reset the demo: `./scripts/seed-demo.sh`. Put your own projects as directories u
 |---|---|---|
 | POST | `/api/agent/run` | Body `{task, workspace, max_iterations?, model?}`. Streams events as SSE (`data: {json}`) |
 | GET | `/api/workspaces` | Project directories under `workspace/` |
-| GET | `/api/runs`, `/api/runs/{id}` | History and stored events (SQLite) |
+| POST | `/api/workspaces` | Body `{name}`. Creates an empty project directory (`400` invalid name, `409` already exists) |
+| GET | `/api/workspaces/details` | Workspaces with `created_at` (null for folders not created via the API), `run_count`, `last_run_at` |
+| GET | `/api/runs`, `/api/runs/{id}` | History and stored events (SQLite). `/api/runs` accepts `?workspace=&limit=` |
+| GET | `/api/files` | Files the agent created/modified, newest first (`?workspace=&limit=`), from stored `file_changed` events |
 | GET | `/api/health` | Ollama reachability, model availability |
 
 ### Events

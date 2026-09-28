@@ -26,6 +26,7 @@ class Status(_Base):
     type: Literal["status"] = "status"
     message: str
     iteration: int | None = None
+    phase: Literal["analyzing", "context", "coding", "checking", "committing"] | None = None
 
 
 class ToolCall(_Base):

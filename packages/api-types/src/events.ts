@@ -17,6 +17,7 @@ export interface StatusEvent extends BaseEvent {
   type: "status";
   message: string;
   iteration?: number | null;
+  phase?: "analyzing" | "context" | "coding" | "checking" | "committing" | null;
 }
 export interface ToolCallEvent extends BaseEvent {
   type: "tool_call";
@@ -103,6 +104,7 @@ export interface RunDetail extends RunSummary {
 export interface Health {
   status: string;
   ollama: boolean;
+  models: string[];
   model: string;
   model_available: boolean;
   sandbox_mode: "docker" | "local";

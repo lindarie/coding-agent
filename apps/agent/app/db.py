@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS events (
     payload TEXT NOT NULL,
     PRIMARY KEY (run_id, seq)
 );
+CREATE TABLE IF NOT EXISTS workspaces (
+    name TEXT PRIMARY KEY,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(type, run_id);
 """
 
 
@@ -69,11 +75,15 @@ class Store:
             )
             self._db.commit()
 
-    def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+    def list_runs(self, limit: int = 50, workspace: str | None = None) -> list[dict[str, Any]]:
+        sql, args = "SELECT * FROM runs", []
+        if workspace:
+            sql += " WHERE workspace=?"
+            args.append(workspace)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        args.append(limit)
         with self._lock:
-            rows = self._db.execute(
-                "SELECT * FROM runs ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
+            rows = self._db.execute(sql, args).fetchall()
         return [dict(r) for r in rows]
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
@@ -86,4 +96,52 @@ class Store:
             ).fetchall()
         out = dict(run)
         out["events"] = [json.loads(e["payload"]) for e in events]
+        return out
+
+    # ---- workspaces & file history ------------------------------------
+    def add_workspace(self, name: str) -> float:
+        """Remember when a workspace was created through the API. Returns created_at."""
+        now = time.time()
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO workspaces (name, created_at) VALUES (?,?)", (name, now))
+            self._db.commit()
+        return now
+
+    def workspace_stats(self) -> dict[str, dict[str, Any]]:
+        """Per-workspace created_at (None if not created via the API) and run counts."""
+        with self._lock:
+            created = self._db.execute("SELECT name, created_at FROM workspaces").fetchall()
+            runs = self._db.execute(
+                "SELECT workspace, COUNT(*) AS n, MAX(created_at) AS last FROM runs GROUP BY workspace"
+            ).fetchall()
+        stats: dict[str, dict[str, Any]] = {}
+        for r in created:
+            stats[r["name"]] = {"created_at": r["created_at"], "run_count": 0, "last_run_at": None}
+        for r in runs:
+            st = stats.setdefault(r["workspace"], {"created_at": None, "run_count": 0, "last_run_at": None})
+            st["run_count"], st["last_run_at"] = r["n"], r["last"]
+        return stats
+
+    def list_file_events(self, workspace: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+        """Files the agent created/modified, newest first, taken from stored file_changed events."""
+        sql = (
+            "SELECT e.run_id, e.ts, e.payload, r.workspace, r.task FROM events e "
+            "JOIN runs r ON r.id = e.run_id WHERE e.type = 'file_changed'"
+        )
+        args: list[Any] = []
+        if workspace:
+            sql += " AND r.workspace = ?"
+            args.append(workspace)
+        sql += " ORDER BY e.ts DESC, e.seq DESC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = self._db.execute(sql, args).fetchall()
+        out = []
+        for r in rows:
+            data = json.loads(r["payload"])
+            out.append({
+                "run_id": r["run_id"], "workspace": r["workspace"], "task": r["task"], "ts": r["ts"],
+                "path": data.get("path", ""), "change": data.get("change", "modified"),
+                "bytes": data.get("bytes", 0),
+            })
         return out
