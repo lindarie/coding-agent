@@ -85,3 +85,34 @@ def test_iteration_limit(tmp_path):
 
     events = asyncio.run(go())
     assert events[-1].type == "agent_finished" and events[-1].status == "max_iterations"
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_loop_executes_json_tool_call_from_text(tmp_path):
+    root = tmp_path / "ws"
+    proj = root / "demo"
+    proj.mkdir(parents=True)
+    s = load_settings({"WORKSPACE_ROOT": str(root), "SANDBOX_MODE": "local", "DB_PATH": str(tmp_path / "db.sqlite")})
+    store = Store(s.db_path)
+    store.create_run("r3", "create a file", "demo", "fake")
+    client = FakeClient([
+        {
+            "role": "assistant",
+            "content": '''```json
+{"name":"write_file","arguments":{"path":"created.py","content":"value = 1\\n"}}
+```''',
+        },
+        {"role": "assistant", "content": "Created created.py."},
+    ])
+    run = AgentRun(
+        run_id="r3", task="create a file", workspace="demo", project=proj, settings=s, client=client,
+        toolbox=ToolBox(proj, s, Sandbox(s, proj)), store=store, model="fake", max_iterations=3,
+    )
+
+    async def go():
+        return [event async for event in run.stream()]
+
+    events = asyncio.run(go())
+    assert (proj / "created.py").read_text() == "value = 1\n"
+    assert any(event.type == "tool_call" and event.tool == "write_file" for event in events)
+    assert events[-1].type == "agent_finished" and events[-1].status == "completed"

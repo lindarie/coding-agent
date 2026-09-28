@@ -186,6 +186,9 @@ export function App() {
   }, [task, workspace, selectedModel]);
 
   const stop = () => abortRef.current?.abort();
+  const activeModel = selectedModel || health?.model || "";
+  const activeModelSupportsTools = health?.tool_models.includes(activeModel) ?? true;
+  const defaultModelSupportsTools = health?.tool_models.includes(health.model) ?? false;
 
   return (
     <main>
@@ -194,6 +197,7 @@ export function App() {
         <span className={`pill ${health?.ollama ? "ok" : "bad"}`}>
           ollama {health ? (health.ollama ? "up" : "down") : "?"}
           {health && health.ollama && !health.model_available ? ` · model ${health.model} missing` : ""}
+          {health && health.ollama && !health.tool_models.includes(health.model) ? " · default model lacks tools" : ""}
         </span>
       </header>
 
@@ -207,6 +211,9 @@ export function App() {
       </nav>
 
       {error && <div className="row bad">⚠ {error}</div>}
+      {health && health.ollama && !activeModelSupportsTools && (
+        <div className="row bad">Model {activeModel} does not support tool calling. Choose a tool-capable model.</div>
+      )}
       {notice && <div className="row ok">✓ {notice}</div>}
 
       {tab === "run" ? (
@@ -284,8 +291,12 @@ export function App() {
                     disabled={running || !health?.ollama}
                     aria-label="Ollama model"
                   >
-                    <option value="">Default ({health?.model ?? "loading"})</option>
-                    {(health?.models ?? []).filter((model) => model !== health?.model).map((model) => (
+                    {defaultModelSupportsTools ? (
+                      <option value="">Default ({health?.model})</option>
+                    ) : (
+                      <option value="" disabled>{health ? "Choose a tool-capable model" : "Loading models..."}</option>
+                    )}
+                    {(health?.tool_models ?? []).filter((model) => model !== health?.model).map((model) => (
                       <option key={model} value={model}>{model}</option>
                     ))}
                   </select>
@@ -293,7 +304,7 @@ export function App() {
                 {running ? (
                   <button onClick={stop} className="stop">Stop</button>
                 ) : (
-                  <button onClick={run} disabled={!task.trim() || !workspace}>Run agent</button>
+                  <button onClick={run} disabled={!task.trim() || !workspace || !activeModelSupportsTools}>Run agent</button>
                 )}
               </div>
             </div>

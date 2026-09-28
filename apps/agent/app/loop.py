@@ -28,6 +28,33 @@ def _preview(text: str, limit: int = 2000) -> str:
     return text if len(text) <= limit else text[:limit] + f"\n[... {len(text) - limit} more characters]"
 
 
+def _text_tool_calls(content: str) -> list[dict[str, Any]]:
+    candidate = content.strip()
+    if candidate.startswith("```") and candidate.endswith("```"):
+        candidate = candidate[3:-3].strip()
+        first_line, separator, body = candidate.partition("\n")
+        if separator and first_line.strip().lower() in {"", "json"}:
+            candidate = body.strip()
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, dict):
+        return []
+
+    name = payload.get("name")
+    args = payload.get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            return []
+    tool_names = {tool["function"]["name"] for tool in TOOL_SPECS}
+    if name not in tool_names or not isinstance(args, dict):
+        return []
+    return [{"function": {"name": name, "arguments": args}}]
+
+
 class AgentRun:
     def __init__(
         self,
@@ -91,7 +118,13 @@ class AgentRun:
                 msg = reply.get("message") or {}
                 content = (msg.get("content") or "").strip()
                 calls = msg.get("tool_calls") or []
+                if not calls:
+                    calls = _text_tool_calls(content)
+                    if calls:
+                        content = ""
                 assistant: dict[str, Any] = {"role": "assistant", "content": msg.get("content") or ""}
+                if calls and not msg.get("tool_calls"):
+                    assistant["content"] = ""
                 if calls:
                     assistant["tool_calls"] = calls
                 messages.append(assistant)

@@ -86,10 +86,16 @@ def test_api_health_lists_installed_models(client, monkeypatch):
     async def list_models():
         return ["qwen3:8b", "deepseek-coder:6.7b"]
 
+    async def list_tool_models(models):
+        assert models == ["qwen3:8b", "deepseek-coder:6.7b"]
+        return ["qwen3:8b"]
+
     monkeypatch.setattr(client.app.state.ollama, "list_models", list_models)
+    monkeypatch.setattr(client.app.state.ollama, "list_tool_models", list_tool_models)
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json()["models"] == ["qwen3:8b", "deepseek-coder:6.7b"]
+    assert response.json()["tool_models"] == ["qwen3:8b"]
 
 
 def test_api_rejects_bad_and_duplicate_names(client, tmp_path):

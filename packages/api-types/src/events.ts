@@ -105,6 +105,7 @@ export interface Health {
   status: string;
   ollama: boolean;
   models: string[];
+  tool_models: string[];
   model: string;
   model_available: boolean;
   sandbox_mode: "docker" | "local";

@@ -54,13 +54,15 @@ async def health(request: Request):
     s = get_settings()
     try:
         models = await request.app.state.ollama.list_models()
+        tool_models = await request.app.state.ollama.list_tool_models(models)
         ollama_ok = True
     except Exception:
-        models, ollama_ok = [], False
+        models, tool_models, ollama_ok = [], [], False
     return {
         "status": "ok",
         "ollama": ollama_ok,
         "models": models,
+        "tool_models": tool_models,
         "model": s.model,
         "model_available": s.model in models,
         "sandbox_mode": s.sandbox_mode,
