@@ -22,6 +22,6 @@ Check that Docker Compose is available with `docker compose version`, and that O
    ```
 2. From the repository root, build and start the services:
    ```sh
-   docker compose up --build -d
+   docker compose up --build
    ```
 3. Open the UI at <http://localhost:8080>
